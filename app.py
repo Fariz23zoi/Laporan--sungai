@@ -1,91 +1,85 @@
-import streamlit as st
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Image as RLImage, Paragraph, Spacer
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.lib.enums import TA_CENTER
-from PIL import Image
-import io
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.styles import Alignment, Font, Border, Side
+import tempfile
 
-st.title("📋 Laporan Penelusuran Sungai")
+if st.button("📊 Export Excel"):
+    wb = Workbook()
+    ws = wb.active
 
-bulan = st.selectbox("Bulan", [
-    "Januari","Februari","Maret","April","Mei","Juni",
-    "Juli","Agustus","September","Oktober","November","Desember"
-])
-tahun = st.number_input("Tahun", value=2026)
+    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    bold = Font(bold=True)
+    border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
 
-if "data" not in st.session_state:
-    st.session_state.data = []
+    # HEADER
+    ws.merge_cells('A1:F1')
+    ws['A1'] = "LAPORAN PENELUSURAN SUNGAI CIPETUNGAN"
+    ws['A1'].font = Font(size=14, bold=True)
+    ws['A1'].alignment = center
 
-st.subheader("Input Data")
+    ws.merge_cells('A2:F2')
+    ws['A2'] = "KOTA/KAB. CIAMIS"
+    ws['A2'].alignment = center
 
-sungai = st.text_input("Nama Sungai", "SUNGAI CIMANTAJA")
-lokasi = st.text_area("Lokasi")
-koordinat = st.text_input("Koordinat")
-keterangan = st.text_area("Keterangan", "Kondisi tebing masih dalam keadaan baik")
-foto = st.file_uploader("Upload Foto", type=["jpg","png","jpeg"])
+    ws.merge_cells('A3:F3')
+    ws['A3'] = "OPERASI DAN PEMELIHARAAN SDA III"
+    ws['A3'].alignment = center
 
-if st.button("➕ Tambah"):
-    if foto:
-        st.session_state.data.append({
-            "sungai": sungai,
-            "lokasi": lokasi,
-            "koordinat": koordinat,
-            "keterangan": keterangan,
-            "foto": foto
-        })
-        st.success("Data ditambahkan!")
+    ws.merge_cells('A4:F4')
+    ws['A4'] = f"BULAN {bulan.upper()} TAHUN {tahun}"
+    ws['A4'].alignment = center
 
-st.write(f"Jumlah data: {len(st.session_state.data)}")
+    headers = ["NO","SUNGAI","LOKASI","KOORDINAT","FOTO","KETERANGAN"]
+    ws.append(headers)
 
-# EXPORT PDF
-if st.button("📄 Export PDF Resmi"):
-    filename = f"Laporan_Sungai_{bulan}_{tahun}.pdf"
+    for col in range(1, 7):
+        cell = ws.cell(row=5, column=col)
+        cell.font = bold
+        cell.alignment = center
+        cell.border = border
 
-    doc = SimpleDocTemplate(filename, pagesize=A4)
-    elements = []
-    styles = getSampleStyleSheet()
+    ws.column_dimensions['A'].width = 5
+    ws.column_dimensions['B'].width = 20
+    ws.column_dimensions['C'].width = 35
+    ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 35
+    ws.column_dimensions['F'].width = 30
 
-    center_title = ParagraphStyle(name='t', alignment=TA_CENTER, fontSize=14)
-    center = ParagraphStyle(name='c', alignment=TA_CENTER, fontSize=11)
-
-    elements.append(Paragraph("LAPORAN PENELUSURAN SUNGAI CIPETUNGAN", center_title))
-    elements.append(Paragraph("KOTA/KABUPATEN CIAMIS", center))
-    elements.append(Paragraph("OPERASI DAN PEMELIHARAAN SDA III", center))
-    elements.append(Paragraph(f"BULAN {bulan.upper()} TAHUN {tahun}", center))
-    elements.append(Spacer(1, 12))
-
-    data = [["NO","SUNGAI","LOKASI","KOORDINAT","FOTO","KETERANGAN"]]
+    row = 6
 
     for i, d in enumerate(st.session_state.data, start=1):
-        img = Image.open(d["foto"])
-        img_io = io.BytesIO()
-        img.save(img_io, format='JPEG')
-        img_io.seek(0)
+        ws.cell(row=row, column=1, value=i)
+        ws.cell(row=row, column=2, value=d["sungai"])
+        ws.cell(row=row, column=3, value=d["lokasi"])
+        ws.cell(row=row, column=4, value=d["koordinat"])
+        ws.cell(row=row, column=6, value=d["keterangan"])
 
-        rl_img = RLImage(img_io, width=5*cm, height=3*cm)
+        for col in [1,2,3,4,6]:
+            c = ws.cell(row=row, column=col)
+            c.alignment = center
+            c.border = border
 
-        data.append([
-            str(i),
-            d["sungai"],
-            d["lokasi"],
-            d["koordinat"],
-            rl_img,
-            d["keterangan"]
-        ])
+        # FOTO
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(d["foto"].read())
+            img = XLImage(tmp.name)
 
-    table = Table(data, repeatRows=1)
+        img.width = 300
+        img.height = 180
+        ws.add_image(img, f'E{row}')
 
-    table.setStyle(TableStyle([
-        ('GRID',(0,0),(-1,-1),1,colors.black),
-        ('BACKGROUND',(0,0),(-1,0),colors.lightgrey),
-        ('ALIGN',(0,0),(-1,-1),'CENTER'),
-    ]))
+        ws.cell(row=row, column=5).border = border
+        ws.row_dimensions[row].height = 140
 
-    elements.append(table)
-    doc.build(elements)
+        row += 1
+
+    filename = f"Laporan_Sungai_{bulan}_{tahun}.xlsx"
+    wb.save(filename)
 
     with open(filename, "rb") as f:
-        st.download_button("⬇️ Download PDF", f, file_name=filename)
+        st.download_button("⬇️ Download Excel", f, file_name=filename)
