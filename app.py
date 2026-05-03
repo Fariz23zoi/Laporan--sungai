@@ -6,7 +6,6 @@ from openpyxl.worksheet.pagebreak import Break
 from datetime import datetime
 from io import BytesIO
 from PIL import Image as PILImage
-from concurrent.futures import ThreadPoolExecutor
 import re
 
 # PDF
@@ -61,6 +60,22 @@ with col2:
         st.session_state.data = []
 
 # ======================
+# PREVIEW (REVIEW)
+# ======================
+if st.session_state.data:
+    st.subheader("🔍 Preview Data")
+    for i, d in enumerate(st.session_state.data, 1):
+        col1, col2 = st.columns([1,2])
+        with col1:
+            st.image(d["foto"], use_container_width=True)
+        with col2:
+            st.write(f"**No:** {i}")
+            st.write(f"**Uraian:** {d['uraian']}")
+            st.write(f"**Lokasi:** {d['lokasi']}")
+            st.write(f"**Koordinat:** {d['koordinat']}")
+            st.write("**Keterangan:** Kondisi tebing masih dalam keadaan baik")
+
+# ======================
 # IMAGE COMPRESS
 # ======================
 def compress_image(file_bytes):
@@ -73,7 +88,7 @@ def compress_image(file_bytes):
     return buf.getvalue()
 
 # ======================
-# EXPORT EXCEL FINAL
+# EXPORT EXCEL
 # ======================
 if st.button("📊 EXPORT EXCEL FINAL"):
 
@@ -86,22 +101,19 @@ if st.button("📊 EXPORT EXCEL FINAL"):
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Laporan"
 
-    # POTRET A4
+    # A4 POTRET
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.fitToWidth = 1
 
-    # STYLE
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
     bold = Font(bold=True)
 
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # KOLOM (PAS POTRET)
+    # KOLOM
     ws.column_dimensions["A"].width = 5
     ws.column_dimensions["B"].width = 19
     ws.column_dimensions["C"].width = 19
@@ -109,64 +121,61 @@ if st.button("📊 EXPORT EXCEL FINAL"):
     ws.column_dimensions["E"].width = 38
     ws.column_dimensions["F"].width = 22
 
-    # nama sungai
     match = re.search(r"sungai\s+(.+)", data[0]["uraian"].lower())
     nama_sungai = match.group(1).upper() if match else data[0]["uraian"].upper()
 
-    def header(start_row):
-        ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=6)
-        ws.cell(start_row,1,f"LAPORAN SUNGAI {nama_sungai}").alignment = center
-        ws.cell(start_row,1).font = Font(bold=True, size=14)
-
-        ws.merge_cells(start_row=start_row+1, start_column=1, end_row=start_row+1, end_column=6)
-        ws.cell(start_row+1,1,"KOTA/KAB. CIAMIS").alignment = center
-
-        ws.merge_cells(start_row=start_row+2, start_column=1, end_row=start_row+2, end_column=6)
-        ws.cell(start_row+2,1,"OPERASI DAN PEMELIHARAAN SDA III").alignment = center
-
-        ws.merge_cells(start_row=start_row+3, start_column=1, end_row=start_row+3, end_column=6)
-        ws.cell(start_row+3,1,f"BULAN {bulan.upper()} TAHUN {tahun}").alignment = center
+    def header(r):
+        for i, text in enumerate([
+            f"LAPORAN SUNGAI {nama_sungai}",
+            "KOTA/KAB. CIAMIS",
+            "OPERASI DAN PEMELIHARAAN SDA III",
+            f"BULAN {bulan.upper()} TAHUN {tahun}"
+        ]):
+            ws.merge_cells(start_row=r+i, start_column=1, end_row=r+i, end_column=6)
+            ws.cell(r+i,1,text).alignment = center
+            ws.cell(r+i,1).font = Font(bold=True, size=16)
 
         headers = ["NO","URAIAN","LOKASI","KOORDINAT","FOTO","KETERANGAN"]
         for i,h in enumerate(headers,1):
-            c = ws.cell(start_row+5,i,h)
+            c = ws.cell(r+5,i,h)
             c.font = bold
             c.alignment = center
             c.border = border
 
-        return start_row + 6
+        return r + 6
 
     row = header(1)
     nomor = 1
-    row_limit = 20
-    counter = 0
+    limit = 20
+    count = 0
 
     for d in data:
 
-        if counter >= row_limit:
+        if count >= limit:
             ws.row_breaks.append(Break(id=row))
             row = header(row)
-            counter = 0
+            count = 0
 
-        ws.row_dimensions[row].height = 165
+        ws.row_dimensions[row].height = 150
 
-        ws.cell(row=row, column=1, value=nomor).alignment = center
-        ws.cell(row=row, column=2, value=d["uraian"])
-        ws.cell(row=row, column=3, value=d["lokasi"])
-        ws.cell(row=row, column=4, value=d["koordinat"]).alignment = center
-        ws.cell(row=row, column=6, value="Kondisi tebing masih dalam keadaan baik")
+        ws.cell(row,1,nomor).alignment = center
+        ws.cell(row,2,d["uraian"]).alignment = center
+        ws.cell(row,3,d["lokasi"]).alignment = center
+        ws.cell(row,4,d["koordinat"]).alignment = center
+        ws.cell(row,6,"Kondisi tebing masih dalam keadaan baik").alignment = center
 
         for col in [1,2,3,4,6]:
-            ws.cell(row=row, column=col).border = border
+            ws.cell(row,col).border = border
 
         img = XLImage(BytesIO(images[nomor-1]))
-        img.width = 320
-        img.height = 180
-        ws.add_image(img, f"E{row}")
+        img.width = 300
+        img.height = 170
+        img.anchor = f"E{row}"
+        ws.add_image(img)
 
         nomor += 1
         row += 1
-        counter += 1
+        count += 1
 
     # TTD
     ttd = row + 1
@@ -188,7 +197,7 @@ if st.button("📊 EXPORT EXCEL FINAL"):
     st.download_button("⬇️ Download Excel", data=out, file_name="laporan.xlsx")
 
 # ======================
-# EXPORT PDF FINAL
+# EXPORT PDF
 # ======================
 if st.button("📄 EXPORT PDF A4"):
 
@@ -207,9 +216,9 @@ if st.button("📄 EXPORT PDF A4"):
     nama_sungai = match.group(1).upper() if match else data[0]["uraian"].upper()
 
     elements.append(Paragraph(f"<b>LAPORAN SUNGAI {nama_sungai}</b>", styles["Title"]))
-    elements.append(Paragraph("<b>KOTA/KAB. CIAMIS</b>", styles["Normal"]))
-    elements.append(Paragraph("<b>OPERASI DAN PEMELIHARAAN SDA III</b>", styles["Normal"]))
-    elements.append(Paragraph(f"<b>BULAN {bulan.upper()} TAHUN {tahun}</b>", styles["Normal"]))
+    elements.append(Paragraph("<b>KOTA/KAB. CIAMIS</b>", styles["Title"]))
+    elements.append(Paragraph("<b>OPERASI DAN PEMELIHARAAN SDA III</b>", styles["Title"]))
+    elements.append(Paragraph(f"<b>BULAN {bulan.upper()} TAHUN {tahun}</b>", styles["Title"]))
     elements.append(Spacer(1, 10))
 
     table_data = [["NO","URAIAN","LOKASI","KOORDINAT","FOTO","KETERANGAN"]]
@@ -237,7 +246,7 @@ if st.button("📄 EXPORT PDF A4"):
 
     table.setStyle(TableStyle([
         ("GRID",(0,0),(-1,-1),1,colors.black),
-        ("ALIGN",(0,0),(-1,0),"CENTER"),
+        ("ALIGN",(0,0),(-1,-1),"CENTER"),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
     ]))
 
