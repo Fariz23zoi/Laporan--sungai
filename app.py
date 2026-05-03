@@ -2,165 +2,233 @@ import streamlit as st
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, Border, Side
+from openpyxl.worksheet.pagebreak import Break
 from datetime import datetime
 from io import BytesIO
 from PIL import Image as PILImage
-import tempfile
-
-st.title("📋 Laporan Penelusuran Sungai")
+from concurrent.futures import ThreadPoolExecutor
+import math
+import re
 
 # ======================
-# INPUT
+# CONFIG
 # ======================
-bulan = st.selectbox("Bulan", [
+st.set_page_config(page_title="Laporan Sungai FINAL", layout="wide")
+st.title("📋 Laporan Penelusuran Sungai FINAL STABLE")
+
+# ======================
+# BULAN
+# ======================
+bulan_list = [
     "Januari","Februari","Maret","April","Mei","Juni",
     "Juli","Agustus","September","Oktober","November","Desember"
-])
+]
 
+bulan_romawi = {
+    "Januari": "I","Februari": "II","Maret": "III","April": "IV",
+    "Mei": "V","Juni": "VI","Juli": "VII","Agustus": "VIII",
+    "September": "IX","Oktober": "X","November": "XI","Desember": "XII"
+}
+
+bulan = st.selectbox("Bulan", bulan_list)
 tahun = st.number_input("Tahun", value=2026)
 
+# ======================
+# SESSION DATA
+# ======================
 if "data" not in st.session_state:
     st.session_state.data = []
 
 st.subheader("Input Data")
 
 uraian = st.text_input("Uraian")
-lokasi = st.text_input("Lokasi")
+lokasi = st.text_area("Lokasi")
 koordinat = st.text_input("Koordinat")
-keterangan = st.text_input("Keterangan")
 foto = st.file_uploader("Upload Foto", type=["jpg","png","jpeg"])
 
-if st.button("Tambah Data"):
-    if uraian and lokasi and foto:
-        st.session_state.data.append({
-            "uraian": uraian,
-            "lokasi": lokasi,
-            "koordinat": koordinat,
-            "keterangan": keterangan,
-            "foto": foto
-        })
-        st.success("Data ditambahkan")
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("➕ Tambah Data"):
+        if not uraian or not lokasi:
+            st.warning("Uraian & Lokasi wajib diisi!")
+        elif not foto:
+            st.warning("Upload foto dulu!")
+        else:
+            st.session_state.data.append({
+                "uraian": uraian,
+                "lokasi": lokasi,
+                "koordinat": koordinat,
+                "foto": foto
+            })
+            st.success("Data berhasil ditambahkan!")
+
+with col2:
+    if st.button("🗑 Reset"):
+        st.session_state.data = []
+
+st.write(f"Total data: {len(st.session_state.data)}")
+
+if st.session_state.data:
+    st.dataframe([{k:v for k,v in d.items() if k!="foto"} for d in st.session_state.data])
 
 # ======================
-# EXPORT EXCEL
+# IMAGE COMPRESS
 # ======================
-if st.button("Export Excel"):
+def compress_image(file_bytes):
+    img = PILImage.open(BytesIO(file_bytes))
+
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    img.thumbnail((1280, 720))
+
+    buffer = BytesIO()
+    img.save(buffer, format="JPEG", quality=65, optimize=True)
+
+    return buffer.getvalue()
+
+# ======================
+# EXPORT
+# ======================
+if st.button("📊 EXPORT EXCEL FINAL 🚀"):
+
+    data = st.session_state.data
+    total = len(data)
+
+    if total == 0:
+        st.warning("Belum ada data!")
+        st.stop()
+
+    progress = st.progress(0)
+
+    def process(d):
+        return compress_image(d["foto"].getvalue())
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        images = list(executor.map(process, data))
+
+    progress.progress(30)
 
     wb = Workbook()
     ws = wb.active
+    ws.title = "Laporan"
 
-    # STYLE
-    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="top", wrap_text=True)
     bold = Font(bold=True)
-    border = Border(
-        left=Side(style='medium'),
-        right=Side(style='medium'),
-        top=Side(style='medium'),
-        bottom=Side(style='medium')
-    )
 
-    # KOLOM
-    ws.column_dimensions['A'].width = 5
-    ws.column_dimensions['B'].width = 25
-    ws.column_dimensions['C'].width = 20
-    ws.column_dimensions['D'].width = 25
-    ws.column_dimensions['E'].width = 45
-    ws.column_dimensions['F'].width = 30
+    thin = Side(style="thin")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # ======================
-    # HEADER
-    # ======================
-    ws.merge_cells('A1:F1')
-    ws['A1'] = "LAPORAN SUNGAI CIMUNTUR"
-    ws['A1'].alignment = center
-    ws['A1'].font = Font(size=16, bold=True)
+    ws.column_dimensions["A"].width = 5
+    ws.column_dimensions["B"].width = 24
+    ws.column_dimensions["C"].width = 22
+    ws.column_dimensions["D"].width = 22
+    ws.column_dimensions["E"].width = 40
+    ws.column_dimensions["F"].width = 30
 
-    ws.merge_cells('A2:F2')
-    ws['A2'] = "KOTA/KAB. CIAMIS"
-    ws['A2'].alignment = center
-    ws['A2'].font = Font(size=14)
+    ws.page_setup.fitToWidth = 1
 
-    ws.merge_cells('A3:F3')
-    ws['A3'] = "OPERASI DAN PEMELIHARAAN SDA III"
-    ws['A3'].alignment = center
-    ws['A3'].font = Font(size=14)
+    match = re.search(r"sungai\s+(.+)", data[0]["uraian"].lower())
+    nama_sungai = match.group(1).upper() if match else data[0]["uraian"].upper()
 
-    ws.merge_cells('A4:F4')
-    ws['A4'] = f"BULAN {bulan.upper()} TAHUN {tahun}"
-    ws['A4'].alignment = center
-    ws['A4'].font = Font(size=14, bold=True)
+    per_page = 5
+    pages = math.ceil(total / per_page)
 
-    ws.merge_cells('A5:F5')
-    ws['A5'] = f"Nomor: 1/1/OPSDA-03/V/{tahun}"
-    ws['A5'].alignment = center
+    row_global = 1
 
-    # ======================
-    # HEADER TABEL
-    # ======================
-    headers = ["NO","URAIAN","LOKASI","KOORDINAT","FOTO","KETERANGAN"]
+    for p in range(pages):
 
-    for col, val in enumerate(headers, 1):
-        cell = ws.cell(row=7, column=col, value=val)
-        cell.alignment = center
-        cell.font = Font(bold=True)
-        cell.border = border
+        if p > 0:
+            ws.row_breaks.append(Break(id=row_global))
 
-    # ======================
-    # DATA
-    # ======================
-    row = 8
+        # HEADER (AMAN TANPA merge_cells ERROR)
+        def merge(row):
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
 
-    for i, d in enumerate(st.session_state.data, start=1):
+        merge(row_global)
+        ws.cell(row_global,1,f"LAPORAN SUNGAI {nama_sungai}").alignment = center
+        ws.cell(row_global,1).font = bold
 
-        ws.row_dimensions[row].height = 210
+        merge(row_global+1)
+        ws.cell(row_global+1,1,"KOTA/KAB. CIAMIS").alignment = center
 
-        ws.cell(row=row, column=1, value=i).alignment = center
-        ws.cell(row=row, column=2, value=d["uraian"]).alignment = center
-        ws.cell(row=row, column=3, value=d["lokasi"]).alignment = center
-        ws.cell(row=row, column=4, value=d["koordinat"]).alignment = center
-        ws.cell(row=row, column=6, value=d["keterangan"]).alignment = center
+        merge(row_global+2)
+        ws.cell(row_global+2,1,"OPSDA 03").alignment = center
 
-        for col in [1,2,3,4,5,6]:
-            ws.cell(row=row, column=col).border = border
+        merge(row_global+3)
+        ws.cell(row_global+3,1,f"BULAN {bulan.upper()} {tahun}").alignment = center
 
-        # FOTO
-        img_file = d["foto"]
-        img = PILImage.open(img_file)
+        merge(row_global+4)
+        nomor = f"{p+1}/{pages}/OPSDA-03/{bulan_romawi[bulan]}/{tahun}"
+        ws.cell(row_global+4,1,f"Nomor: {nomor}").alignment = center
 
-        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-        img.save(temp.name)
+        headers = ["NO","URAIAN","LOKASI","KOORDINAT","FOTO","KETERANGAN"]
 
-        xl_img = XLImage(temp.name)
-        xl_img.width = 300
-        xl_img.height = 170
-        xl_img.anchor = f"E{row}"
+        for i,h in enumerate(headers,1):
+            c = ws.cell(row_global+5,i,h)
+            c.font = bold
+            c.alignment = center
+            c.border = border
 
-        ws.add_image(xl_img)
+        start = p * per_page
+        end = start + per_page
+        chunk = data[start:end]
 
-        row += 1
+        row = row_global + 7
 
-    # ======================
-    # TTD
-    # ======================
-    ttd_row = row + 1
-    today = datetime.now()
+        for i, d in enumerate(chunk,1):
 
-    ws.merge_cells(start_row=ttd_row, start_column=5, end_row=ttd_row, end_column=6)
-    ws.cell(row=ttd_row, column=5, value=f"Ciamis, {today.day} {bulan} {today.year}").alignment = center
+            ws.row_dimensions[row].height = 160
 
-    ws.merge_cells(start_row=ttd_row+1, start_column=5, end_row=ttd_row+1, end_column=6)
-    ws.cell(row=ttd_row+1, column=5, value="Juru Sungai OPSDA 03").alignment = center
+            ws.cell(row=row, column=1, value=i)
+            ws.cell(row=row, column=2, value=d["uraian"])
+            ws.cell(row=row, column=3, value=d["lokasi"])
+            ws.cell(row=row, column=4, value=d["koordinat"])
+            ws.cell(row=row, column=6, value="Kondisi tebing masih dalam keadaan baik")
 
-    ws.merge_cells(start_row=ttd_row+4, start_column=5, end_row=ttd_row+4, end_column=6)
-    ws.cell(row=ttd_row+4, column=5, value="Fariz Rionaldi").alignment = center
+            for col in [1,2,3,4,6]:
+                ws.cell(row=row, column=col).alignment = left
+                ws.cell(row=row, column=col).border = border
 
-    # SAVE
+            img = XLImage(BytesIO(images[start+i-1]))
+            img.width = 260
+            img.height = 150
+            img.anchor = f"E{row}"
+            ws.add_image(img)
+
+            row += 1
+
+        ttd = row + 2
+        now = datetime.now()
+
+        def merge_sig(r):
+            ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+
+        merge_sig(ttd)
+        ws.cell(ttd,5,f"Ciamis, {now.day} {bulan_list[now.month-1]} {now.year}").alignment = center
+
+        merge_sig(ttd+1)
+        ws.cell(ttd+1,5,"Juru Sungai OPSDA 03").alignment = center
+
+        merge_sig(ttd+4)
+        ws.cell(ttd+4,5,"Fariz Rionaldi").alignment = center
+
+        row_global = ttd + 6
+
+        progress.progress(int(((p+1)/pages)*100))
+
     output = BytesIO()
     wb.save(output)
     output.seek(0)
 
+    progress.progress(100)
+
+    st.success("Export berhasil 🚀")
+
     st.download_button(
-        "Download Excel",
+        "⬇️ Download Excel",
         data=output,
-        file_name="Laporan_Sungai.xlsx"
+        file_name=f"Laporan_Sungai_{bulan}_{tahun}.xlsx"
     )
