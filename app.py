@@ -13,14 +13,20 @@ import folium
 from streamlit_folium import st_folium
 from geopy.distance import geodesic
 import textwrap
-import math
+import time
 
 # ======================
 # KONFIG
 # ======================
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+
+supabase = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except:
+        supabase = None
 
 st.set_page_config(layout="wide")
 st.title("📋 Monitoring Sungai")
@@ -31,7 +37,7 @@ st.title("📋 Monitoring Sungai")
 loc = streamlit_geolocation()
 
 lat, lon = None, None
-if loc and loc["latitude"]:
+if loc and loc.get("latitude"):
     lat = loc["latitude"]
     lon = loc["longitude"]
 
@@ -44,15 +50,7 @@ def get_weather(lat, lon):
         res = requests.get(url, timeout=5).json()
         w = res.get("current_weather", {})
         suhu = w.get("temperature")
-        code = w.get("weathercode")
-
-        kondisi_map = {
-            0:"Cerah",1:"Cerah Berawan",2:"Berawan",3:"Mendung",
-            61:"Hujan Ringan",63:"Hujan",65:"Hujan Lebat"
-        }
-        kondisi = kondisi_map.get(code,"-")
-
-        return f"{kondisi} {suhu}°C"
+        return f"{suhu}°C"
     except:
         return "-"
 
@@ -73,26 +71,18 @@ def overlay_ts(file_bytes, lokasi, koordinat, uraian, ket, cuaca, waktu):
 
     try:
         f_big = ImageFont.truetype("arial.ttf",32)
-        f_small = ImageFont.truetype("arial.ttf",24)
+        f_small = ImageFont.truetype("arial.ttf",22)
     except:
         f_big = f_small = ImageFont.load_default()
-
-    draw.rectangle([(10,h-overlay_h),(15,h)],fill=(255,200,0))
 
     x,y = 30, h-overlay_h+20
     draw.text((x,y), waktu, fill="white", font=f_big); y+=40
     draw.text((x,y), cuaca, fill="white", font=f_small); y+=30
 
-    def wrap(txt,y):
+    for txt in [lokasi, koordinat, uraian, ket]:
         for line in textwrap.wrap(txt,40):
             draw.text((x,y), line, fill="white", font=f_small)
             y+=28
-        return y
-
-    y=wrap(lokasi,y)
-    draw.text((x,y), koordinat, fill="white", font=f_small); y+=30
-    y=wrap(uraian,y)
-    y=wrap(ket,y)
 
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=65)
@@ -114,16 +104,12 @@ foto_list = st.file_uploader("Multi Foto", accept_multiple_files=True)
 # SIMPAN
 # ======================
 def simpan(data, fotos):
-    try:
-        res = supabase.table("laporan").insert({
-            "uraian": data["uraian"],
-            "lokasi": data["lokasi"],
-            "koordinat": data["koordinat"],
-            "keterangan": data["keterangan"],
-            "cuaca": data["cuaca"],
-            "waktu": data["waktu"]
-        }).execute()
+    if not supabase:
+        st.error("❌ Supabase belum terhubung")
+        return
 
+    try:
+        res = supabase.table("laporan").insert(data).execute()
         laporan_id = res.data[0]["id"]
 
         for f in fotos:
@@ -131,7 +117,6 @@ def simpan(data, fotos):
                 continue
 
             raw = f.read()
-
             img_bytes = overlay_ts(
                 raw,
                 data["lokasi"],
@@ -142,10 +127,9 @@ def simpan(data, fotos):
                 data["waktu"]
             )
 
-            filename = f"{laporan_id}_{datetime.now().timestamp()}.jpg"
+            filename = f"{laporan_id}_{time.time()}.jpg"
 
             supabase.storage.from_("foto").upload(filename, img_bytes)
-
             url = supabase.storage.from_("foto").get_public_url(filename)
 
             supabase.table("foto").insert({
@@ -196,9 +180,19 @@ if st.button("Simpan"):
         st.warning("GPS belum aktif")
 
 # ======================
-# AMBIL DATA
+# AMBIL DATA (ANTI ERROR)
 # ======================
-data = supabase.table("laporan").select("*").execute().data or []
+data = []
+
+if supabase:
+    for i in range(2):  # retry 2x
+        try:
+            res = supabase.table("laporan").select("*").execute()
+            if res and res.data:
+                data = res.data
+            break
+        except:
+            time.sleep(1)
 
 # ======================
 # DASHBOARD
@@ -209,8 +203,6 @@ st.metric("Total Data", len(data))
 # ======================
 # MAP
 # ======================
-st.subheader("🗺️ Map Tracking")
-
 coords=[]
 for d in data:
     try:
@@ -235,9 +227,9 @@ if coords:
     st.metric("Total Jarak (m)", int(total))
 
 # ======================
-# EXPORT EXCEL A4 PRO
+# EXPORT EXCEL A4
 # ======================
-st.subheader("📊 Export Laporan")
+st.subheader("📊 Export")
 
 if st.button("Export Excel A4"):
 
@@ -246,76 +238,26 @@ if st.button("Export Excel A4"):
 
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
 
-    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    left = Alignment(horizontal='left', vertical='top', wrap_text=True)
+    center = Alignment(horizontal='center', vertical='center')
     bold = Font(bold=True)
-
-    thin = Side(style='thin')
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     ws.column_dimensions['A'].width = 5
     ws.column_dimensions['B'].width = 25
-    ws.column_dimensions['C'].width = 20
-    ws.column_dimensions['D'].width = 25
-    ws.column_dimensions['E'].width = 35
+    ws.column_dimensions['C'].width = 25
+    ws.column_dimensions['D'].width = 30
 
-    ws.merge_cells('A1:E1')
     ws['A1'] = "LAPORAN MONITORING SUNGAI"
-    ws['A1'].alignment = center
     ws['A1'].font = bold
 
-    headers = ["NO","URAIAN","LOKASI","KETERANGAN","FOTO"]
+    ws.append(["NO","URAIAN","LOKASI","KETERANGAN"])
 
-    for col, val in enumerate(headers,1):
-        c = ws.cell(row=3, column=col)
-        c.value = val
-        c.font = bold
-        c.alignment = center
-        c.border = border
-
-    row = 4
+    row = 3
 
     for i, d in enumerate(data, start=1):
-
-        ws.row_dimensions[row].height = 140
-
-        ws.cell(row=row, column=1, value=i)
-        ws.cell(row=row, column=2, value=d["uraian"])
-        ws.cell(row=row, column=3, value=d["lokasi"])
-        ws.cell(row=row, column=4, value=d["keterangan"])
-
-        for col in [1,2,3,4]:
-            ws.cell(row=row, column=col).alignment = left
-            ws.cell(row=row, column=col).border = border
-
-        fotos = supabase.table("foto").select("*").eq("laporan_id", d["id"]).execute().data
-
-        if fotos:
-            try:
-                img_url = fotos[0]["url_foto"]
-                img_bytes = requests.get(img_url).content
-
-                with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                    tmp.write(img_bytes)
-                    img = XLImage(tmp.name)
-
-                img.width = 240
-                img.height = 130
-                img.anchor = f"E{row}"
-                ws.add_image(img)
-            except:
-                pass
-
-        ws.cell(row=row, column=5).border = border
-
-        row += 1
+        ws.append([i,d["uraian"],d["lokasi"],d["keterangan"]])
 
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
 
-    st.download_button(
-        "⬇️ Download Excel",
-        buf,
-        file_name="laporan_sungai_A4.xlsx"
-    )
+    st.download_button("Download Excel", buf, "laporan.xlsx")
