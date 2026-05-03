@@ -1,8 +1,4 @@
 streamlit
-supabase
-requests
-pillow
 openpyxl
-folium
-streamlit-folium
-geopy
+pillow
+reportlab==4.0.8
