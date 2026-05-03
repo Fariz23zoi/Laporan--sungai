@@ -14,7 +14,7 @@ import re
 # CONFIG
 # ======================
 st.set_page_config(page_title="Laporan Sungai", layout="wide")
-st.title("📋 Laporan Penelusuran Sungai FINAL")
+st.title("📋 Laporan Penelusuran Sungai")
 
 # ======================
 # BULAN
@@ -73,7 +73,7 @@ if st.session_state.data:
     st.dataframe([{k:v for k,v in d.items() if k!="foto"} for d in st.session_state.data])
 
 # ======================
-# IMAGE COMPRESS
+# COMPRESS IMAGE
 # ======================
 def compress_image(file_bytes, quality=65):
     img = PILImage.open(BytesIO(file_bytes))
@@ -102,20 +102,16 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
     progress = st.progress(0)
 
-    # ======================
     # COMPRESS PARALLEL
-    # ======================
     def process(d):
         return compress_image(d["foto"].getvalue())
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         images = list(executor.map(process, data))
 
-    progress.progress(25)
+    progress.progress(30)
 
-    # ======================
-    # EXCEL SETUP
-    # ======================
+    # EXCEL
     wb = Workbook()
     ws = wb.active
     ws.title = "Laporan"
@@ -136,9 +132,7 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
     ws.page_setup.fitToWidth = 1
 
-    # ======================
     # NAMA SUNGAI
-    # ======================
     match = re.search(r"sungai\s+(.+)", data[0]["uraian"].lower())
     nama_sungai = match.group(1).upper() if match else data[0]["uraian"].upper()
 
@@ -147,33 +141,32 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
     row_global = 1
 
-    # ======================
-    # LOOP PAGE
-    # ======================
     for p in range(pages):
 
         if p > 0:
             ws.row_breaks.append(Break(id=row_global))
 
-        # HEADER
-        ws.merge_cells(row_global,1,row_global,6)
+        # ======================
+        # HEADER (FIXED MERGE CELLS)
+        # ======================
+        ws.merge_cells(f"A{row_global}:F{row_global}")
         ws.cell(row_global,1,f"LAPORAN SUNGAI {nama_sungai}").alignment = center
         ws.cell(row_global,1).font = bold
 
-        ws.merge_cells(row_global+1,1,row_global+1,6)
+        ws.merge_cells(f"A{row_global+1}:F{row_global+1}")
         ws.cell(row_global+1,1,"KOTA/KAB. CIAMIS").alignment = center
 
-        ws.merge_cells(row_global+2,1,row_global+2,6)
+        ws.merge_cells(f"A{row_global+2}:F{row_global+2}")
         ws.cell(row_global+2,1,"OPSDA 03").alignment = center
 
-        ws.merge_cells(row_global+3,1,row_global+3,6)
+        ws.merge_cells(f"A{row_global+3}:F{row_global+3}")
         ws.cell(row_global+3,1,f"BULAN {bulan.upper()} {tahun}").alignment = center
 
         nomor = f"{p+1}/{pages}/OPSDA-03/{bulan_romawi[bulan]}/{tahun}"
-        ws.merge_cells(row_global+4,1,row_global+4,6)
+        ws.merge_cells(f"A{row_global+4}:F{row_global+4}")
         ws.cell(row_global+4,1,f"Nomor: {nomor}").alignment = center
 
-        # HEADER TABLE
+        # TABLE HEADER
         headers = ["NO","URAIAN","LOKASI","KOORDINAT","FOTO","KETERANGAN"]
 
         for i,h in enumerate(headers,1):
@@ -197,7 +190,7 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
             ws.cell(row,row,3,value=d["lokasi"])
             ws.cell(row,row,4,value=d["koordinat"])
 
-            # AUTO KETERANGAN (FIX DI SINI)
+            # AUTO KETERANGAN
             ws.cell(row,row,6,value="Kondisi tebing masih dalam keadaan baik")
 
             for col in [1,2,3,4,6]:
@@ -213,26 +206,26 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
             row += 1
 
-        # TTD
+        # ======================
+        # SIGNATURE (FIXED MERGE CELLS)
+        # ======================
         ttd = row + 2
         now = datetime.now()
 
-        ws.merge_cells(ttd,5,ttd,6)
+        ws.merge_cells(f"E{ttd}:F{ttd}")
         ws.cell(ttd,5,f"Ciamis, {now.day} {bulan_list[now.month-1]} {now.year}").alignment = center
 
-        ws.merge_cells(ttd+1,5,ttd+1,6)
+        ws.merge_cells(f"E{ttd+1}:F{ttd+1}")
         ws.cell(ttd+1,5,"Juru Sungai OPSDA 03").alignment = center
 
-        ws.merge_cells(ttd+4,5,ttd+4,6)
+        ws.merge_cells(f"E{ttd+4}:F{ttd+4}")
         ws.cell(ttd+4,5,"Fariz Rionaldi").alignment = center
 
         row_global = ttd + 6
 
         progress.progress(int(((p+1)/pages)*100))
 
-    # ======================
-    # DOWNLOAD
-    # ======================
+    # SAVE
     output = BytesIO()
     wb.save(output)
     output.seek(0)
