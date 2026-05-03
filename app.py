@@ -1,6 +1,5 @@
 import streamlit as st
 from supabase import create_client
-from streamlit_geolocation import streamlit_geolocation
 import requests
 from datetime import datetime
 from io import BytesIO
@@ -13,82 +12,21 @@ import textwrap
 import time
 
 # ======================
-# KONFIG
+# KONFIG (HARDCODE DULU BIAR AMAN)
 # ======================
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+SUPABASE_URL = "https://gkadevvilhbcwyyojfm.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."  # PASTE FULL KEY DI SINI
 
-supabase = None
-if SUPABASE_URL and SUPABASE_KEY:
-    try:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    except:
-        supabase = None
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(layout="wide")
 st.title("📋 Monitoring Sungai")
 
 # ======================
-# INFO KETERANGAN (LOCK)
+# KETERANGAN LOCK
 # ======================
 KETERANGAN_DEFAULT = "Kondisi tebing masih dalam keadaan baik"
 st.info(f"Keterangan otomatis: {KETERANGAN_DEFAULT}")
-
-# ======================
-# GPS
-# ======================
-loc = streamlit_geolocation()
-lat, lon = None, None
-if loc and loc.get("latitude"):
-    lat = loc["latitude"]
-    lon = loc["longitude"]
-
-# ======================
-# CUACA
-# ======================
-def get_weather(lat, lon):
-    try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-        res = requests.get(url, timeout=5).json()
-        w = res.get("current_weather", {})
-        suhu = w.get("temperature")
-        return f"{suhu}°C"
-    except:
-        return "-"
-
-cuaca_auto = get_weather(lat, lon) if lat else "-"
-
-# ======================
-# OVERLAY FOTO
-# ======================
-def overlay_ts(file_bytes, lokasi, koordinat, uraian, ket, cuaca, waktu):
-    img = PILImage.open(BytesIO(file_bytes)).convert("RGB")
-    w, h = img.size
-
-    overlay_h = int(h * 0.32)
-    overlay = PILImage.new("RGBA", (w, overlay_h), (0, 0, 0, 170))
-    img.paste(overlay, (0, h - overlay_h), overlay)
-
-    draw = ImageDraw.Draw(img)
-
-    try:
-        f_big = ImageFont.truetype("arial.ttf", 32)
-        f_small = ImageFont.truetype("arial.ttf", 22)
-    except:
-        f_big = f_small = ImageFont.load_default()
-
-    x, y = 30, h - overlay_h + 20
-    draw.text((x, y), waktu, fill="white", font=f_big); y += 40
-    draw.text((x, y), cuaca, fill="white", font=f_small); y += 30
-
-    for txt in [lokasi, koordinat, uraian, ket]:
-        for line in textwrap.wrap(txt or "-", 40):
-            draw.text((x, y), line, fill="white", font=f_small)
-            y += 28
-
-    buf = BytesIO()
-    img.save(buf, format="JPEG", quality=65)
-    return buf.getvalue()
 
 # ======================
 # INPUT
@@ -98,25 +36,62 @@ st.subheader("Input Data")
 uraian = st.text_input("Uraian")
 lokasi = st.text_area("Lokasi")
 
-mode_1klik = st.toggle("⚡ Mode 1 Klik Survey")
+# Koordinat manual (AMAN)
+lat = st.text_input("Latitude (opsional)")
+lon = st.text_input("Longitude (opsional)")
+
 foto_list = st.file_uploader("Multi Foto", accept_multiple_files=True)
+
+# ======================
+# CUACA
+# ======================
+def get_weather():
+    try:
+        return "-"
+    except:
+        return "-"
+
+cuaca_auto = get_weather()
+
+# ======================
+# OVERLAY FOTO
+# ======================
+def overlay_ts(file_bytes, lokasi, koordinat, uraian, ket, cuaca, waktu):
+    img = PILImage.open(BytesIO(file_bytes)).convert("RGB")
+    w, h = img.size
+
+    overlay_h = int(h * 0.3)
+    overlay = PILImage.new("RGBA", (w, overlay_h), (0, 0, 0, 160))
+    img.paste(overlay, (0, h - overlay_h), overlay)
+
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 22)
+    except:
+        font = ImageFont.load_default()
+
+    y = h - overlay_h + 10
+    texts = [waktu, cuaca, lokasi, koordinat, uraian, ket]
+
+    for t in texts:
+        for line in textwrap.wrap(str(t), 40):
+            draw.text((10, y), line, fill="white", font=font)
+            y += 25
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=65)
+    return buf.getvalue()
 
 # ======================
 # SIMPAN
 # ======================
 def simpan(data, fotos):
-    if not supabase:
-        st.error("❌ Supabase belum terhubung")
-        return
-
     try:
         res = supabase.table("laporan").insert(data).execute()
         laporan_id = res.data[0]["id"]
 
         for f in fotos:
-            if f is None:
-                continue
-
             raw = f.read()
 
             img_bytes = overlay_ts(
@@ -143,57 +118,33 @@ def simpan(data, fotos):
         st.error(f"Gagal simpan: {e}")
 
 # ======================
-# MODE 1 KLIK
-# ======================
-if mode_1klik:
-    cam = st.camera_input("Ambil Foto")
-
-    if cam and lat and lon:
-        data = {
-            "uraian": uraian or "Penelusuran",
-            "lokasi": lokasi or "GPS",
-            "koordinat": f"{lat},{lon}",
-            "keterangan": KETERANGAN_DEFAULT,
-            "cuaca": cuaca_auto,
-            "waktu": datetime.now().strftime("%d %B %Y %H:%M")
-        }
-
-        simpan(data, [cam])
-        st.success("Tersimpan!")
-        st.rerun()
-
-# ======================
-# SIMPAN MANUAL
+# BUTTON SIMPAN
 # ======================
 if st.button("Simpan"):
-    if lat and lon:
-        data = {
-            "uraian": uraian,
-            "lokasi": lokasi,
-            "koordinat": f"{lat},{lon}",
-            "keterangan": KETERANGAN_DEFAULT,
-            "cuaca": cuaca_auto,
-            "waktu": datetime.now().strftime("%d %B %Y %H:%M")
-        }
+    koordinat = f"{lat},{lon}" if lat and lon else "-"
 
-        simpan(data, foto_list)
-        st.success("Data masuk!")
-    else:
-        st.warning("GPS belum aktif")
+    data = {
+        "uraian": uraian,
+        "lokasi": lokasi,
+        "koordinat": koordinat,
+        "keterangan": KETERANGAN_DEFAULT,
+        "cuaca": cuaca_auto,
+        "waktu": datetime.now().strftime("%d %B %Y %H:%M")
+    }
+
+    simpan(data, foto_list)
+    st.success("Data masuk!")
 
 # ======================
-# AMBIL DATA (ANTI ERROR)
+# AMBIL DATA
 # ======================
 data = []
-if supabase:
-    for _ in range(2):
-        try:
-            res = supabase.table("laporan").select("*").execute()
-            if res and res.data:
-                data = res.data
-            break
-        except:
-            time.sleep(1)
+try:
+    res = supabase.table("laporan").select("*").execute()
+    if res.data:
+        data = res.data
+except:
+    st.warning("Database belum terbaca")
 
 # ======================
 # DASHBOARD
@@ -204,8 +155,6 @@ st.metric("Total Data", len(data))
 # ======================
 # MAP
 # ======================
-st.subheader("🗺️ Map Tracking")
-
 coords = []
 for d in data:
     try:
@@ -232,9 +181,7 @@ if coords:
 # ======================
 # EXPORT EXCEL
 # ======================
-st.subheader("📊 Export")
-
-if st.button("Export Excel A4"):
+if st.button("Export Excel"):
     wb = Workbook()
     ws = wb.active
 
@@ -252,8 +199,4 @@ if st.button("Export Excel A4"):
     wb.save(buf)
     buf.seek(0)
 
-    st.download_button(
-        "⬇️ Download Excel",
-        buf,
-        file_name="laporan_sungai.xlsx"
-    )
+    st.download_button("Download Excel", buf, "laporan.xlsx")
