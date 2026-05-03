@@ -13,8 +13,8 @@ import re
 # ======================
 # CONFIG
 # ======================
-st.set_page_config(page_title="Laporan Sungai", layout="wide")
-st.title("📋 Laporan Penelusuran Sungai")
+st.set_page_config(page_title="Laporan Sungai FINAL", layout="wide")
+st.title("📋 Laporan Penelusuran Sungai FINAL STABLE")
 
 # ======================
 # BULAN
@@ -34,7 +34,7 @@ bulan = st.selectbox("Bulan", bulan_list)
 tahun = st.number_input("Tahun", value=2026)
 
 # ======================
-# SESSION
+# SESSION DATA
 # ======================
 if "data" not in st.session_state:
     st.session_state.data = []
@@ -64,7 +64,7 @@ with col1:
             st.success("Data berhasil ditambahkan!")
 
 with col2:
-    if st.button("🗑 Reset Data"):
+    if st.button("🗑 Reset"):
         st.session_state.data = []
 
 st.write(f"Total data: {len(st.session_state.data)}")
@@ -73,9 +73,9 @@ if st.session_state.data:
     st.dataframe([{k:v for k,v in d.items() if k!="foto"} for d in st.session_state.data])
 
 # ======================
-# COMPRESS IMAGE
+# IMAGE COMPRESS
 # ======================
-def compress_image(file_bytes, quality=65):
+def compress_image(file_bytes):
     img = PILImage.open(BytesIO(file_bytes))
 
     if img.mode in ("RGBA", "P"):
@@ -84,7 +84,7 @@ def compress_image(file_bytes, quality=65):
     img.thumbnail((1280, 720))
 
     buffer = BytesIO()
-    img.save(buffer, format="JPEG", quality=quality, optimize=True)
+    img.save(buffer, format="JPEG", quality=65, optimize=True)
 
     return buffer.getvalue()
 
@@ -102,7 +102,6 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
     progress = st.progress(0)
 
-    # COMPRESS PARALLEL
     def process(d):
         return compress_image(d["foto"].getvalue())
 
@@ -111,7 +110,6 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
     progress.progress(30)
 
-    # EXCEL
     wb = Workbook()
     ws = wb.active
     ws.title = "Laporan"
@@ -132,7 +130,6 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
     ws.page_setup.fitToWidth = 1
 
-    # NAMA SUNGAI
     match = re.search(r"sungai\s+(.+)", data[0]["uraian"].lower())
     nama_sungai = match.group(1).upper() if match else data[0]["uraian"].upper()
 
@@ -146,27 +143,27 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
         if p > 0:
             ws.row_breaks.append(Break(id=row_global))
 
-        # ======================
-        # HEADER (FIXED MERGE CELLS)
-        # ======================
-        ws.merge_cells(f"A{row_global}:F{row_global}")
+        # HEADER (AMAN TANPA merge_cells ERROR)
+        def merge(row):
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+
+        merge(row_global)
         ws.cell(row_global,1,f"LAPORAN SUNGAI {nama_sungai}").alignment = center
         ws.cell(row_global,1).font = bold
 
-        ws.merge_cells(f"A{row_global+1}:F{row_global+1}")
+        merge(row_global+1)
         ws.cell(row_global+1,1,"KOTA/KAB. CIAMIS").alignment = center
 
-        ws.merge_cells(f"A{row_global+2}:F{row_global+2}")
+        merge(row_global+2)
         ws.cell(row_global+2,1,"OPSDA 03").alignment = center
 
-        ws.merge_cells(f"A{row_global+3}:F{row_global+3}")
+        merge(row_global+3)
         ws.cell(row_global+3,1,f"BULAN {bulan.upper()} {tahun}").alignment = center
 
+        merge(row_global+4)
         nomor = f"{p+1}/{pages}/OPSDA-03/{bulan_romawi[bulan]}/{tahun}"
-        ws.merge_cells(f"A{row_global+4}:F{row_global+4}")
         ws.cell(row_global+4,1,f"Nomor: {nomor}").alignment = center
 
-        # TABLE HEADER
         headers = ["NO","URAIAN","LOKASI","KOORDINAT","FOTO","KETERANGAN"]
 
         for i,h in enumerate(headers,1):
@@ -185,19 +182,16 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
             ws.row_dimensions[row].height = 160
 
-            ws.cell(row,row,1,value=i)
-            ws.cell(row,row,2,value=d["uraian"])
-            ws.cell(row,row,3,value=d["lokasi"])
-            ws.cell(row,row,4,value=d["koordinat"])
-
-            # AUTO KETERANGAN
-            ws.cell(row,row,6,value="Kondisi tebing masih dalam keadaan baik")
+            ws.cell(row=row, column=1, value=i)
+            ws.cell(row=row, column=2, value=d["uraian"])
+            ws.cell(row=row, column=3, value=d["lokasi"])
+            ws.cell(row=row, column=4, value=d["koordinat"])
+            ws.cell(row=row, column=6, value="Kondisi tebing masih dalam keadaan baik")
 
             for col in [1,2,3,4,6]:
-                ws.cell(row,col).alignment = left
-                ws.cell(row,col).border = border
+                ws.cell(row=row, column=col).alignment = left
+                ws.cell(row=row, column=col).border = border
 
-            # IMAGE
             img = XLImage(BytesIO(images[start+i-1]))
             img.width = 260
             img.height = 150
@@ -206,26 +200,25 @@ if st.button("📊 EXPORT EXCEL FINAL 🚀"):
 
             row += 1
 
-        # ======================
-        # SIGNATURE (FIXED MERGE CELLS)
-        # ======================
         ttd = row + 2
         now = datetime.now()
 
-        ws.merge_cells(f"E{ttd}:F{ttd}")
+        def merge_sig(r):
+            ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+
+        merge_sig(ttd)
         ws.cell(ttd,5,f"Ciamis, {now.day} {bulan_list[now.month-1]} {now.year}").alignment = center
 
-        ws.merge_cells(f"E{ttd+1}:F{ttd+1}")
+        merge_sig(ttd+1)
         ws.cell(ttd+1,5,"Juru Sungai OPSDA 03").alignment = center
 
-        ws.merge_cells(f"E{ttd+4}:F{ttd+4}")
+        merge_sig(ttd+4)
         ws.cell(ttd+4,5,"Fariz Rionaldi").alignment = center
 
         row_global = ttd + 6
 
         progress.progress(int(((p+1)/pages)*100))
 
-    # SAVE
     output = BytesIO()
     wb.save(output)
     output.seek(0)
