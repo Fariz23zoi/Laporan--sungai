@@ -4,6 +4,8 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, Border, Side
 from datetime import datetime
 import tempfile
+import math
+import re
 
 st.title("📋 Laporan Penelusuran Sungai")
 
@@ -18,16 +20,11 @@ bulan_list = [
 bulan = st.selectbox("Bulan", bulan_list)
 tahun = st.number_input("Tahun", value=2026)
 
-# ======================
-# ROMAWI
-# ======================
 bulan_romawi = {
     "Januari": "I","Februari": "II","Maret": "III","April": "IV",
     "Mei": "V","Juni": "VI","Juli": "VII","Agustus": "VIII",
     "September": "IX","Oktober": "X","November": "XI","Desember": "XII"
 }
-
-nomor_laporan = f"600/OPSDA-03/{bulan_romawi[bulan]}/{tahun}"
 
 # ======================
 # DATA
@@ -37,10 +34,10 @@ if "data" not in st.session_state:
 
 st.subheader("Input Data")
 
-uraian = st.text_input("Uraian")
+uraian = st.text_input("Uraian (contoh: Sungai Cimuntur)")
 lokasi = st.text_area("Lokasi")
 koordinat = st.text_input("Koordinat")
-keterangan = st.text_area("Keterangan", "Kondisi tebing masih dalam keadaan baik")
+keterangan = st.text_area("Keterangan")
 foto = st.file_uploader("Upload Foto", type=["jpg","png","jpeg"])
 
 if st.button("➕ Tambah Data"):
@@ -59,22 +56,30 @@ if st.button("➕ Tambah Data"):
 st.write(f"Jumlah data: {len(st.session_state.data)}")
 
 # ======================
-# EXPORT EXCEL
+# EXPORT
 # ======================
 if st.button("📊 Export Excel"):
     wb = Workbook()
     ws = wb.active
 
+    # ======================
+    # SET A4 PORTRAIT
+    # ======================
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+
+    # ======================
     # STYLE
+    # ======================
     center = Alignment(horizontal='center', vertical='center', wrap_text=True)
     left_top = Alignment(horizontal='left', vertical='top', wrap_text=True)
     bold = Font(bold=True)
 
     thin = Side(style='thin')
-    border_all = Border(left=thin, right=thin, top=thin, bottom=thin)
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     # ======================
-    # UKURAN KOLOM
+    # KOLOM
     # ======================
     ws.column_dimensions['A'].width = 5
     ws.column_dimensions['B'].width = 24
@@ -84,14 +89,20 @@ if st.button("📊 Export Excel"):
     ws.column_dimensions['F'].width = 32
 
     # ======================
-    # TINGGI BARIS
+    # HITUNG HALAMAN
     # ======================
-    ws.row_dimensions[1].height = 30
-    ws.row_dimensions[2].height = 20
-    ws.row_dimensions[3].height = 20
-    ws.row_dimensions[4].height = 20
-    ws.row_dimensions[5].height = 20
-    ws.row_dimensions[6].height = 30
+    total_data = len(st.session_state.data)
+    data_per_page = 5
+    total_halaman = max(1, math.ceil(total_data / data_per_page))
+
+    nomor_laporan = f"{total_halaman}/OPSDA-03/{bulan_romawi[bulan]}/{tahun}"
+
+    # ======================
+    # AMBIL NAMA SUNGAI DARI URAIAN
+    # ======================
+    uraian_text = st.session_state.data[0]["uraian"] if total_data > 0 else ""
+    match = re.search(r"sungai\s+(.*)", uraian_text.lower())
+    nama_sungai = match.group(1).upper() if match else uraian_text.upper()
 
     # ======================
     # JUDUL
@@ -102,7 +113,7 @@ if st.button("📊 Export Excel"):
     ws.merge_cells('A4:F4')
     ws.merge_cells('A5:F5')
 
-    ws['A1'] = "LAPORAN PENELUSURAN SUNGAI CIWADORI"
+    ws['A1'] = f"LAPORAN PENELUSURAN SUNGAI {nama_sungai}"
     ws['A2'] = "KOTA/KAB. CIAMIS"
     ws['A3'] = "OPERASI DAN PEMELIHARAAN SDA III"
     ws['A4'] = f"BULAN {bulan.upper()} TAHUN {tahun}"
@@ -110,8 +121,7 @@ if st.button("📊 Export Excel"):
 
     for i in range(1, 6):
         ws[f"A{i}"].alignment = center
-        if i == 1:
-            ws[f"A{i}"].font = Font(bold=True, size=14)
+        ws[f"A{i}"].font = bold
 
     # ======================
     # HEADER
@@ -123,7 +133,7 @@ if st.button("📊 Export Excel"):
         c.value = val
         c.font = bold
         c.alignment = center
-        c.border = border_all
+        c.border = border
 
     # ======================
     # DATA
@@ -140,46 +150,40 @@ if st.button("📊 Export Excel"):
         ws.cell(row=row, column=4, value=d["koordinat"])
         ws.cell(row=row, column=6, value=d["keterangan"])
 
-        ws.cell(row=row, column=1).alignment = center
-        ws.cell(row=row, column=2).alignment = left_top
-        ws.cell(row=row, column=3).alignment = left_top
-        ws.cell(row=row, column=4).alignment = left_top
-        ws.cell(row=row, column=6).alignment = left_top
+        for col in [1,2,3,4,6]:
+            ws.cell(row=row, column=col).alignment = left_top
+            ws.cell(row=row, column=col).border = border
 
-        for col in range(1, 7):
-            ws.cell(row=row, column=col).border = border_all
-
-        # FOTO
+        # FOTO MASUK DALAM CELL
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp.write(d["foto"].read())
             img = XLImage(tmp.name)
 
-        img.width = 260
-        img.height = 150
-        ws.add_image(img, f'E{row}')
+        img.width = 220
+        img.height = 120
+        img.anchor = f"E{row}"
+        ws.add_image(img)
+
+        ws.cell(row=row, column=5).border = border
 
         row += 1
 
     # ======================
-    # TANDA TANGAN + TANGGAL
+    # TANGGAL + TTD
     # ======================
     ttd_row = row + 2
 
-    bulan_indo = bulan_list
     today = datetime.now()
-    tanggal = f"Ciamis, {today.day} {bulan_indo[today.month-1]} {today.year}"
+    tanggal = f"Ciamis, {today.day} {bulan_list[today.month-1]} {today.year}"
 
-    # Tanggal
     ws.merge_cells(start_row=ttd_row-1, start_column=5, end_row=ttd_row-1, end_column=6)
     ws.cell(row=ttd_row-1, column=5).value = tanggal
     ws.cell(row=ttd_row-1, column=5).alignment = center
 
-    # Jabatan
     ws.merge_cells(start_row=ttd_row, start_column=5, end_row=ttd_row, end_column=6)
     ws.cell(row=ttd_row, column=5).value = "Juru Sungai OPSDA 03"
     ws.cell(row=ttd_row, column=5).alignment = center
 
-    # Gambar tanda tangan (opsional)
     try:
         ttd_img = XLImage("ttd.png")
         ttd_img.width = 160
@@ -188,9 +192,8 @@ if st.button("📊 Export Excel"):
     except:
         pass
 
-    # Nama
     ws.merge_cells(start_row=ttd_row+3, start_column=5, end_row=ttd_row+3, end_column=6)
-    ws.cell(row=ttd_row+3, column=5).value = "Faniz Rionaldi"
+    ws.cell(row=ttd_row+3, column=5).value = "Fariz Rionaldi"
     ws.cell(row=ttd_row+3, column=5).alignment = center
 
     # ======================
