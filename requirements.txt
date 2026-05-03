@@ -1,4 +1,9 @@
 streamlit
+supabase
+streamlit-geolocation
+streamlit-folium
+folium
+pillow
+requests
 openpyxl
-reportlab
-Pillow
+geopy
