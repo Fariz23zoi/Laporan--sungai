@@ -6,9 +6,6 @@ from datetime import datetime
 from io import BytesIO
 from PIL import Image as PILImage, ImageDraw, ImageFont
 from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.styles import Alignment, Font, Border, Side
-import tempfile
 import folium
 from streamlit_folium import st_folium
 from geopy.distance import geodesic
@@ -32,10 +29,15 @@ st.set_page_config(layout="wide")
 st.title("📋 Monitoring Sungai")
 
 # ======================
+# INFO KETERANGAN (LOCK)
+# ======================
+KETERANGAN_DEFAULT = "Kondisi tebing masih dalam keadaan baik"
+st.info(f"Keterangan otomatis: {KETERANGAN_DEFAULT}")
+
+# ======================
 # GPS
 # ======================
 loc = streamlit_geolocation()
-
 lat, lon = None, None
 if loc and loc.get("latitude"):
     lat = loc["latitude"]
@@ -63,26 +65,26 @@ def overlay_ts(file_bytes, lokasi, koordinat, uraian, ket, cuaca, waktu):
     img = PILImage.open(BytesIO(file_bytes)).convert("RGB")
     w, h = img.size
 
-    overlay_h = int(h*0.32)
-    overlay = PILImage.new("RGBA",(w,overlay_h),(0,0,0,170))
-    img.paste(overlay,(0,h-overlay_h),overlay)
+    overlay_h = int(h * 0.32)
+    overlay = PILImage.new("RGBA", (w, overlay_h), (0, 0, 0, 170))
+    img.paste(overlay, (0, h - overlay_h), overlay)
 
     draw = ImageDraw.Draw(img)
 
     try:
-        f_big = ImageFont.truetype("arial.ttf",32)
-        f_small = ImageFont.truetype("arial.ttf",22)
+        f_big = ImageFont.truetype("arial.ttf", 32)
+        f_small = ImageFont.truetype("arial.ttf", 22)
     except:
         f_big = f_small = ImageFont.load_default()
 
-    x,y = 30, h-overlay_h+20
-    draw.text((x,y), waktu, fill="white", font=f_big); y+=40
-    draw.text((x,y), cuaca, fill="white", font=f_small); y+=30
+    x, y = 30, h - overlay_h + 20
+    draw.text((x, y), waktu, fill="white", font=f_big); y += 40
+    draw.text((x, y), cuaca, fill="white", font=f_small); y += 30
 
     for txt in [lokasi, koordinat, uraian, ket]:
-        for line in textwrap.wrap(txt,40):
-            draw.text((x,y), line, fill="white", font=f_small)
-            y+=28
+        for line in textwrap.wrap(txt or "-", 40):
+            draw.text((x, y), line, fill="white", font=f_small)
+            y += 28
 
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=65)
@@ -95,7 +97,6 @@ st.subheader("Input Data")
 
 uraian = st.text_input("Uraian")
 lokasi = st.text_area("Lokasi")
-keterangan = st.text_area("Keterangan")
 
 mode_1klik = st.toggle("⚡ Mode 1 Klik Survey")
 foto_list = st.file_uploader("Multi Foto", accept_multiple_files=True)
@@ -117,12 +118,13 @@ def simpan(data, fotos):
                 continue
 
             raw = f.read()
+
             img_bytes = overlay_ts(
                 raw,
                 data["lokasi"],
                 data["koordinat"],
                 data["uraian"],
-                data["keterangan"],
+                KETERANGAN_DEFAULT,
                 data["cuaca"],
                 data["waktu"]
             )
@@ -151,7 +153,7 @@ if mode_1klik:
             "uraian": uraian or "Penelusuran",
             "lokasi": lokasi or "GPS",
             "koordinat": f"{lat},{lon}",
-            "keterangan": keterangan or "-",
+            "keterangan": KETERANGAN_DEFAULT,
             "cuaca": cuaca_auto,
             "waktu": datetime.now().strftime("%d %B %Y %H:%M")
         }
@@ -169,7 +171,7 @@ if st.button("Simpan"):
             "uraian": uraian,
             "lokasi": lokasi,
             "koordinat": f"{lat},{lon}",
-            "keterangan": keterangan,
+            "keterangan": KETERANGAN_DEFAULT,
             "cuaca": cuaca_auto,
             "waktu": datetime.now().strftime("%d %B %Y %H:%M")
         }
@@ -183,9 +185,8 @@ if st.button("Simpan"):
 # AMBIL DATA (ANTI ERROR)
 # ======================
 data = []
-
 if supabase:
-    for i in range(2):  # retry 2x
+    for _ in range(2):
         try:
             res = supabase.table("laporan").select("*").execute()
             if res and res.data:
@@ -203,61 +204,56 @@ st.metric("Total Data", len(data))
 # ======================
 # MAP
 # ======================
-coords=[]
+st.subheader("🗺️ Map Tracking")
+
+coords = []
 for d in data:
     try:
-        lat,lon=map(float,d["koordinat"].split(","))
-        coords.append((lat,lon))
+        la, lo = map(float, d["koordinat"].split(","))
+        coords.append((la, lo))
     except:
         pass
 
 if coords:
     m = folium.Map(location=coords[0], zoom_start=14)
 
-    for (lat,lon) in coords:
-        folium.Marker([lat,lon]).add_to(m)
+    for (la, lo) in coords:
+        folium.Marker([la, lo]).add_to(m)
 
     folium.PolyLine(coords).add_to(m)
     st_folium(m, width=700, height=500)
 
-    total=0
-    for i in range(len(coords)-1):
-        total+=geodesic(coords[i],coords[i+1]).meters
+    total = 0
+    for i in range(len(coords) - 1):
+        total += geodesic(coords[i], coords[i + 1]).meters
 
     st.metric("Total Jarak (m)", int(total))
 
 # ======================
-# EXPORT EXCEL A4
+# EXPORT EXCEL
 # ======================
 st.subheader("📊 Export")
 
 if st.button("Export Excel A4"):
-
     wb = Workbook()
     ws = wb.active
 
-    ws.page_setup.paperSize = ws.PAPERSIZE_A4
-
-    center = Alignment(horizontal='center', vertical='center')
-    bold = Font(bold=True)
-
-    ws.column_dimensions['A'].width = 5
-    ws.column_dimensions['B'].width = 25
-    ws.column_dimensions['C'].width = 25
-    ws.column_dimensions['D'].width = 30
-
-    ws['A1'] = "LAPORAN MONITORING SUNGAI"
-    ws['A1'].font = bold
-
-    ws.append(["NO","URAIAN","LOKASI","KETERANGAN"])
-
-    row = 3
+    ws.append(["NO", "URAIAN", "LOKASI", "KETERANGAN"])
 
     for i, d in enumerate(data, start=1):
-        ws.append([i,d["uraian"],d["lokasi"],d["keterangan"]])
+        ws.append([
+            i,
+            d["uraian"],
+            d["lokasi"],
+            KETERANGAN_DEFAULT
+        ])
 
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
 
-    st.download_button("Download Excel", buf, "laporan.xlsx")
+    st.download_button(
+        "⬇️ Download Excel",
+        buf,
+        file_name="laporan_sungai.xlsx"
+    )
