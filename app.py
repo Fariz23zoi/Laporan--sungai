@@ -1,249 +1,282 @@
 import streamlit as st
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.styles import Alignment, Font, Border, Side
+from supabase import create_client
+from streamlit_geolocation import streamlit_geolocation
+import requests
 from datetime import datetime
 from io import BytesIO
-from PIL import Image as PILImage
-from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
-import tempfile
-import math
-import re
-
-st.title("📋 Laporan Penelusuran Sungai PRO MAX")
+from PIL import Image as PILImage, ImageDraw, ImageFont
+from openpyxl import Workbook
+import folium
+from streamlit_folium import st_folium
+from geopy.distance import geodesic
+import textwrap
 
 # ======================
-# BULAN
+# KONFIG SUPABASE (STREAMLIT CLOUD)
 # ======================
-bulan_list = [
-    "Januari","Februari","Maret","April","Mei","Juni",
-    "Juli","Agustus","September","Oktober","November","Desember"
-]
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
-bulan = st.selectbox("Bulan", bulan_list)
-tahun = st.number_input("Tahun", value=2026)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-bulan_romawi = {
-    "Januari": "I","Februari": "II","Maret": "III","April": "IV",
-    "Mei": "V","Juni": "VI","Juli": "VII","Agustus": "VIII",
-    "September": "IX","Oktober": "X","November": "XI","Desember": "XII"
-}
+st.set_page_config(layout="wide")
+st.title("📋 Sistem Monitoring Sungai")
 
 # ======================
-# SESSION
+# LOGIN
 # ======================
-if "data" not in st.session_state:
-    st.session_state.data = []
+if "user" not in st.session_state:
+    st.subheader("🔐 Login")
 
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        try:
+            res = supabase.auth.sign_in_with_password({
+                "email": email,
+                "password": password
+            })
+            st.session_state.user = res.user
+            st.success("Login berhasil")
+            st.rerun()
+        except:
+            st.error("Login gagal")
+
+    st.stop()
+
+# ======================
+# GPS
+# ======================
+loc = streamlit_geolocation()
+
+lat, lon = None, None
+if loc and loc["latitude"]:
+    lat = loc["latitude"]
+    lon = loc["longitude"]
+
+# ======================
+# CUACA
+# ======================
+def get_weather(lat, lon):
+    try:
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+        res = requests.get(url, timeout=5).json()
+        w = res.get("current_weather", {})
+        suhu = w.get("temperature")
+        code = w.get("weathercode")
+
+        kondisi_map = {
+            0:"Cerah",1:"Cerah Berawan",2:"Berawan",3:"Mendung",
+            61:"Hujan Ringan",63:"Hujan",65:"Hujan Lebat"
+        }
+        kondisi = kondisi_map.get(code,"-")
+
+        return f"{kondisi} {suhu}°C"
+    except:
+        return "-"
+
+cuaca_auto = get_weather(lat, lon) if lat else "-"
+
+# ======================
+# OVERLAY FOTO
+# ======================
+def overlay_ts(file_bytes, lokasi, koordinat, uraian, ket, cuaca, waktu):
+    img = PILImage.open(BytesIO(file_bytes)).convert("RGB")
+    w, h = img.size
+
+    overlay_h = int(h*0.32)
+    overlay = PILImage.new("RGBA",(w,overlay_h),(0,0,0,170))
+    img.paste(overlay,(0,h-overlay_h),overlay)
+
+    draw = ImageDraw.Draw(img)
+
+    try:
+        f_big = ImageFont.truetype("arial.ttf",32)
+        f_small = ImageFont.truetype("arial.ttf",24)
+    except:
+        f_big = f_small = ImageFont.load_default()
+
+    draw.rectangle([(10,h-overlay_h),(15,h)],fill=(255,200,0))
+
+    x,y = 30, h-overlay_h+20
+    draw.text((x,y), waktu, fill="white", font=f_big); y+=40
+    draw.text((x,y), cuaca, fill="white", font=f_small); y+=30
+
+    def wrap(txt,y):
+        for line in textwrap.wrap(txt,40):
+            draw.text((x,y), line, fill="white", font=f_small)
+            y+=28
+        return y
+
+    y=wrap(lokasi,y)
+    draw.text((x,y), koordinat, fill="white", font=f_small); y+=30
+    y=wrap(uraian,y)
+    y=wrap(ket,y)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=65)
+    return buf.getvalue()
+
+# ======================
+# INPUT
+# ======================
 st.subheader("Input Data")
 
 uraian = st.text_input("Uraian")
 lokasi = st.text_area("Lokasi")
-koordinat = st.text_input("Koordinat")
 keterangan = st.text_area("Keterangan")
-foto = st.file_uploader("Upload Foto", type=["jpg","png","jpeg"])
 
-col1, col2 = st.columns(2)
+mode_1klik = st.toggle("⚡ Mode 1 Klik Survey")
 
-with col1:
-    if st.button("➕ Tambah Data"):
-        if not uraian or not lokasi:
-            st.warning("Uraian & Lokasi wajib!")
-        elif not foto:
-            st.warning("Upload foto dulu!")
-        else:
-            st.session_state.data.append({
-                "uraian": uraian,
-                "lokasi": lokasi,
-                "koordinat": koordinat,
-                "keterangan": keterangan,
-                "foto": foto
-            })
-            st.success("Data ditambahkan!")
-
-with col2:
-    if st.button("🗑 Reset Data"):
-        st.session_state.data = []
-
-st.write(f"Jumlah data: {len(st.session_state.data)}")
-
-# Preview
-if st.session_state.data:
-    st.dataframe([
-        {k:v for k,v in d.items() if k!="foto"}
-        for d in st.session_state.data
-    ])
+foto_list = st.file_uploader("Multi Foto", accept_multiple_files=True)
 
 # ======================
-# COMPRESS + CACHE
+# SIMPAN DATA
 # ======================
-@lru_cache(maxsize=200)
-def compress_image_cached(file_bytes, quality=65):
-    img = PILImage.open(BytesIO(file_bytes))
+def simpan(data, fotos):
+    try:
+        res = supabase.table("laporan").insert({
+            "user_id": st.session_state.user.id,
+            "uraian": data["uraian"],
+            "lokasi": data["lokasi"],
+            "koordinat": data["koordinat"],
+            "keterangan": data["keterangan"],
+            "cuaca": data["cuaca"],
+            "waktu": data["waktu"]
+        }).execute()
 
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
+        laporan_id = res.data[0]["id"]
 
-    img.thumbnail((1280, 720))
+        for f in fotos:
+            if f is None:
+                continue
 
-    buffer = BytesIO()
-    img.save(buffer, format="JPEG", quality=quality, optimize=True)
-    return buffer.getvalue()
+            raw = f.read()
+
+            img_bytes = overlay_ts(
+                raw,
+                data["lokasi"],
+                data["koordinat"],
+                data["uraian"],
+                data["keterangan"],
+                data["cuaca"],
+                data["waktu"]
+            )
+
+            filename = f"{laporan_id}_{datetime.now().timestamp()}.jpg"
+
+            supabase.storage.from_("foto").upload(filename, img_bytes)
+
+            url = supabase.storage.from_("foto").get_public_url(filename)
+
+            supabase.table("foto").insert({
+                "laporan_id": laporan_id,
+                "url_foto": url
+            }).execute()
+
+    except Exception as e:
+        st.error(f"Gagal simpan: {e}")
 
 # ======================
-# EXPORT
+# MODE 1 KLIK
 # ======================
-if st.button("📊 Export Excel SUPER CEPAT"):
+if mode_1klik:
+    cam = st.camera_input("Ambil Foto")
 
-    data = st.session_state.data
-    total_data = len(data)
+    if cam and lat and lon:
+        data = {
+            "uraian": uraian or "Penelusuran",
+            "lokasi": lokasi or "GPS",
+            "koordinat": f"{lat},{lon}",
+            "keterangan": keterangan or "-",
+            "cuaca": cuaca_auto,
+            "waktu": datetime.now().strftime("%d %B %Y %H:%M")
+        }
 
-    if total_data == 0:
-        st.warning("Belum ada data!")
-        st.stop()
+        simpan(data, [cam])
+        st.success("Tersimpan!")
+        st.rerun()
 
-    # ======================
-    # PARALLEL COMPRESS
-    # ======================
-    def process_image(d):
-        d["foto"].seek(0)
-        return compress_image_cached(d["foto"].read())
+# ======================
+# SIMPAN MANUAL
+# ======================
+if st.button("Simpan"):
+    if lat and lon:
+        data = {
+            "uraian": uraian,
+            "lokasi": lokasi,
+            "koordinat": f"{lat},{lon}",
+            "keterangan": keterangan,
+            "cuaca": cuaca_auto,
+            "waktu": datetime.now().strftime("%d %B %Y %H:%M")
+        }
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        compressed_images = list(executor.map(process_image, data))
+        simpan(data, foto_list)
+        st.success("Data masuk!")
+    else:
+        st.warning("GPS belum aktif")
 
-    # ======================
-    # EXCEL
-    # ======================
-    wb = Workbook()
-    ws = wb.active
+# ======================
+# AMBIL DATA
+# ======================
+data = supabase.table("laporan").select("*").execute().data or []
 
-    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    left_top = Alignment(horizontal='left', vertical='top', wrap_text=True)
-    bold = Font(bold=True)
+# ======================
+# DASHBOARD
+# ======================
+st.subheader("📊 Dashboard")
+st.metric("Total Data", len(data))
 
-    thin = Side(style='thin')
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+# ======================
+# MAP
+# ======================
+st.subheader("🗺️ Map Tracking")
 
-    # KOLOM
-    ws.column_dimensions['A'].width = 5
-    ws.column_dimensions['B'].width = 24
-    ws.column_dimensions['C'].width = 20
-    ws.column_dimensions['D'].width = 22
-    ws.column_dimensions['E'].width = 40
-    ws.column_dimensions['F'].width = 30
+coords=[]
+for d in data:
+    try:
+        lat,lon=map(float,d["koordinat"].split(","))
+        coords.append((lat,lon))
+    except:
+        pass
 
-    # PAGE SETUP (BIAR PRINT AMAN)
-    ws.page_setup.fitToWidth = 1
+if coords:
+    m = folium.Map(location=coords[0], zoom_start=14)
 
-    # PAGINATION
-    data_per_page = 5
-    total_halaman = math.ceil(total_data / data_per_page)
+    for i,(lat,lon) in enumerate(coords):
+        folium.Marker([lat,lon]).add_to(m)
 
-    # NAMA SUNGAI
-    uraian_text = data[0]["uraian"]
-    match = re.search(r"sungai\s+(.+)", uraian_text.lower())
-    nama_sungai = match.group(1).upper() if match else uraian_text.upper()
+    folium.PolyLine(coords).add_to(m)
+    st_folium(m, width=700, height=500)
 
-    row_global = 1
+    total=0
+    for i in range(len(coords)-1):
+        total+=geodesic(coords[i],coords[i+1]).meters
 
-    for page in range(total_halaman):
+    st.metric("Total Jarak (m)", int(total))
 
-        if page > 0:
-            ws.page_breaks.append(row_global)
+# ======================
+# EXPORT EXCEL
+# ======================
+if st.button("Export Excel"):
 
-        # JUDUL
-        ws.merge_cells(start_row=row_global, start_column=1, end_row=row_global, end_column=6)
-        ws.cell(row=row_global, column=1, value=f"LAPORAN PENELUSURAN SUNGAI {nama_sungai}").alignment = center
-        ws.cell(row=row_global, column=1).font = bold
+    wb=Workbook()
+    ws=wb.active
 
-        ws.merge_cells(start_row=row_global+1, start_column=1, end_row=row_global+1, end_column=6)
-        ws.cell(row=row_global+1, column=1, value="KOTA/KAB. CIAMIS").alignment = center
+    ws.append(["Uraian","Lokasi","Koordinat","Cuaca","Waktu"])
 
-        ws.merge_cells(start_row=row_global+2, start_column=1, end_row=row_global+2, end_column=6)
-        ws.cell(row=row_global+2, column=1, value="OPERASI DAN PEMELIHARAAN SDA III").alignment = center
+    for d in data:
+        ws.append([
+            d["uraian"],
+            d["lokasi"],
+            d["koordinat"],
+            d["cuaca"],
+            d["waktu"]
+        ])
 
-        ws.merge_cells(start_row=row_global+3, start_column=1, end_row=row_global+3, end_column=6)
-        ws.cell(row=row_global+3, column=1, value=f"BULAN {bulan.upper()} {tahun}").alignment = center
+    buf=BytesIO()
+    wb.save(buf)
+    buf.seek(0)
 
-        nomor = f"{page+1}/{total_halaman}/OPSDA-03/{bulan_romawi[bulan]}/{tahun}"
-        ws.merge_cells(start_row=row_global+4, start_column=1, end_row=row_global+4, end_column=6)
-        ws.cell(row=row_global+4, column=1, value=f"Nomor: {nomor}").alignment = center
-
-        # HEADER
-        headers = ["NO","URAIAN","LOKASI","KOORDINAT","FOTO","KETERANGAN"]
-        for col, val in enumerate(headers, 1):
-            c = ws.cell(row=row_global+5, column=col)
-            c.value = val
-            c.font = bold
-            c.alignment = center
-            c.border = border
-
-        # DATA PER PAGE
-        start = page * data_per_page
-        end = start + data_per_page
-        page_data = data[start:end]
-
-        row = row_global + 7
-
-        for i, d in enumerate(page_data, start=1):
-
-            ws.row_dimensions[row].height = 170
-
-            ws.cell(row=row, column=1, value=i)
-            ws.cell(row=row, column=2, value=d["uraian"])
-            ws.cell(row=row, column=3, value=d["lokasi"])
-            ws.cell(row=row, column=4, value=d["koordinat"])
-            ws.cell(row=row, column=6, value=d["keterangan"])
-
-            for col in [1,2,3,4,6]:
-                ws.cell(row=row, column=col).alignment = left_top
-                ws.cell(row=row, column=col).border = border
-
-            # FOTO
-            img_bytes = compressed_images[start + i - 1]
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-                tmp.write(img_bytes)
-                img = XLImage(tmp.name)
-
-            img.width = 260
-            img.height = 150
-            img.anchor = f"E{row}"
-            ws.add_image(img)
-
-            ws.cell(row=row, column=5).border = border
-
-            row += 1
-
-        # TTD
-        ttd_row = row + 2
-        today = datetime.now()
-        tanggal = f"Ciamis, {today.day} {bulan_list[today.month-1]} {today.year}"
-
-        ws.merge_cells(start_row=ttd_row, start_column=5, end_row=ttd_row, end_column=6)
-        ws.cell(row=ttd_row, column=5, value=tanggal).alignment = center
-
-        ws.merge_cells(start_row=ttd_row+1, start_column=5, end_row=ttd_row+1, end_column=6)
-        ws.cell(row=ttd_row+1, column=5, value="Juru Sungai OPSDA 03").alignment = center
-
-        ws.merge_cells(start_row=ttd_row+4, start_column=5, end_row=ttd_row+4, end_column=6)
-        ws.cell(row=ttd_row+4, column=5, value="Fariz Rionaldi").alignment = center
-
-        row_global = ttd_row + 6
-
-    # ======================
-    # SAVE MEMORY (RINGAN)
-    # ======================
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-
-    filename = f"Laporan_Sungai_{bulan}_{tahun}.xlsx"
-
-    st.download_button(
-        "⬇️ Download Excel",
-        data=output,
-        file_name=filename
-    )
+    st.download_button("Download Excel", buf, file_name="laporan.xlsx")
